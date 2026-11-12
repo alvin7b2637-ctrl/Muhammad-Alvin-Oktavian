@@ -1,0 +1,321 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Penangkap Kunang-kunang</title>
+<style>
+:root{
+  --night:#150f3d; --night2:#2a1a6e; --lime:#d8f34a; --teal:#19c3b1;
+  --coral:#ff5d73; --gold:#ffb703; --ink:#f4f1ff; --soft:#b9b0e8;
+  color-scheme: dark;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{height:100%;overflow:hidden;background:var(--night);color:var(--ink);
+  font-family:ui-rounded,"Trebuchet MS","Segoe UI",system-ui,sans-serif}
+#app{display:flex;flex-direction:column;height:100%;max-width:900px;margin:0 auto;
+  padding:env(safe-area-inset-top,0) env(safe-area-inset-right,0) env(safe-area-inset-bottom,0) env(safe-area-inset-left,0)}
+header{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;flex-wrap:wrap}
+.stats{display:flex;gap:14px;align-items:center}
+.stat b{display:block;font-size:1.5rem;line-height:1;color:var(--lime);font-variant-numeric:tabular-nums}
+.stat span{font-size:.75rem;color:var(--soft)}
+#lives{font-size:1.4rem;letter-spacing:2px;color:var(--coral)}
+#lives i{font-style:normal}#lives i.off{opacity:.2}
+.btns{display:flex;gap:8px}
+button{font:inherit;font-weight:700;border:0;border-radius:999px;padding:10px 18px;cursor:pointer;
+  color:var(--ink);background:rgba(255,255,255,.12);transition:transform .12s,background .12s}
+button:hover{background:rgba(255,255,255,.2)}
+button:active{transform:scale(.95)}
+button:focus-visible{outline:3px solid var(--lime);outline-offset:2px}
+button.primary{color:#10202a;background:linear-gradient(135deg,var(--lime),var(--teal));font-size:1.1rem;padding:13px 30px}
+#stage{position:relative;flex:1;min-height:0;margin:0 10px 10px;border-radius:22px;overflow:hidden;
+  box-shadow:0 0 0 2px rgba(216,243,74,.25),0 20px 50px rgba(0,0,0,.45)}
+canvas{display:block;width:100%;height:100%;touch-action:none;cursor:ew-resize}
+#overlay{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;padding:16px;
+  background:rgba(14,9,45,.72);backdrop-filter:blur(3px)}
+#overlay.hide{display:none}
+.card{max-width:420px;width:100%;text-align:center;padding:26px 22px;border-radius:24px;
+  background:linear-gradient(160deg,#35208a,#1c1255);box-shadow:0 12px 40px rgba(0,0,0,.5);
+  animation:pop .35s ease-out}
+@keyframes pop{from{transform:scale(.85);opacity:0}to{transform:none;opacity:1}}
+.card h1{font-size:1.9rem;line-height:1.15;margin-bottom:10px;color:var(--lime)}
+.card p,.card li{color:var(--soft);line-height:1.5;font-size:1rem}
+.card ul{list-style:none;text-align:left;margin:12px 0 18px;display:grid;gap:10px}
+.card li b{color:var(--ink)}
+.big{font-size:3rem;font-weight:800;color:var(--lime);margin:6px 0}
+.row{display:flex;gap:10px;justify-content:center;flex-wrap:wrap;margin-top:16px}
+@media (prefers-reduced-motion:reduce){.card{animation:none}button{transition:none}}
+@media (max-width:480px){.btns button{padding:9px 13px;font-size:.9rem}.card h1{font-size:1.55rem}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <div class="stats">
+      <div class="stat"><b id="score">0</b><span>Skor</span></div>
+      <div class="stat"><b id="best">0</b><span>Rekor</span></div>
+      <div class="stat"><b id="mult">x1</b><span>Kombo</span></div>
+      <div id="lives" aria-label="Nyawa"></div>
+    </div>
+    <div class="btns">
+      <button data-act="help">Petunjuk</button>
+      <button data-act="restart">Restart</button>
+    </div>
+  </header>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="overlay"></div>
+  </div>
+</div>
+
+<script>
+(function(){
+"use strict";
+var cv=document.getElementById("c"),ctx=cv.getContext("2d"),ov=document.getElementById("overlay");
+var elScore=document.getElementById("score"),elBest=document.getElementById("best"),
+    elMult=document.getElementById("mult"),elLives=document.getElementById("lives");
+var W=300,H=500,dpr=1,stars=[];
+var state="idle",prev="idle";
+var score=0,lives=3,combo=0,best=0,level=1,t=0,spawnT=0,shake=0;
+var items=[],parts=[],pops=[];
+var px=150,target=150,keys={left:false,right:false};
+
+try{best=parseInt(localStorage.getItem("kunang_best"),10)||0}catch(e){best=0}
+elBest.textContent=best;
+
+function mult(){return Math.min(5,1+Math.floor(combo/5))}
+function jarW(){return Math.max(64,Math.min(110,W*0.2))}
+
+function resize(){
+  dpr=Math.min(window.devicePixelRatio||1,2);
+  var r=cv.getBoundingClientRect();
+  W=Math.max(200,r.width);H=Math.max(200,r.height);
+  cv.width=Math.round(W*dpr);cv.height=Math.round(H*dpr);
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+  stars=[];
+  for(var i=0;i<60;i++)stars.push({x:Math.random()*W,y:Math.random()*H*0.8,r:Math.random()*1.4+.3,p:Math.random()*6});
+  px=Math.min(Math.max(px,jarW()/2),W-jarW()/2);target=px;
+}
+
+function hud(){
+  elScore.textContent=score;elBest.textContent=best;elMult.textContent="x"+mult();
+  var h="";for(var i=0;i<3;i++)h+='<i class="'+(i<lives?"":"off")+'">&#9829;</i>';
+  elLives.innerHTML=h;
+}
+
+function show(html){ov.innerHTML='<div class="card">'+html+'</div>';ov.classList.remove("hide")}
+function hide(){ov.classList.add("hide")}
+
+function showStart(){
+  state="idle";
+  show('<h1>Penangkap Kunang-kunang</h1><p>Tangkap kunang-kunang yang jatuh dengan toplesmu, tapi hindari ngengat gelap!</p>'+
+    '<div class="row"><button class="primary" data-act="start">Mulai</button><button data-act="help">Petunjuk</button></div>');
+}
+function showOver(){
+  state="over";
+  var n=score>0&&score>=best?'<p>Rekor baru! Kamu hebat.</p>':'<p>Rekor tertinggi: '+best+'</p>';
+  show('<h1>Permainan selesai</h1><p>Skor kamu</p><div class="big">'+score+'</div>'+n+
+    '<div class="row"><button class="primary" data-act="restart">Main lagi</button><button data-act="help">Petunjuk</button></div>');
+}
+function showHelp(){
+  prev=state;if(state==="play")state="pause";
+  var back=prev==="play"?"Lanjut main":"Tutup";
+  show('<h1>Petunjuk</h1><ul>'+
+    '<li><b>Gerakkan toples:</b> geser jari atau mouse ke kiri dan kanan. Di komputer bisa pakai tombol panah atau A dan D.</li>'+
+    '<li><b>Kunang-kunang hijau:</b> +10 poin.</li>'+
+    '<li><b>Kunang-kunang emas:</b> +30 poin.</li>'+
+    '<li><b>Ngengat ungu bermata merah:</b> hindari! Kena satu, nyawa berkurang.</li>'+
+    '<li><b>Kombo:</b> tangkap 5 berturut-turut untuk naikkan pengali hingga x5. Kunang-kunang yang lolos mengulang kombo.</li>'+
+    '<li><b>Nyawa:</b> kamu punya 3. Kecepatan naik tiap level.</li></ul>'+
+    '<button class="primary" data-act="closehelp">'+back+'</button>');
+}
+
+function reset(){
+  score=0;lives=3;combo=0;level=1;t=0;spawnT=0;shake=0;
+  items=[];parts=[];pops=[];
+  px=target=W/2;hud();
+}
+function start(){reset();state="play";hide()}
+
+function spawn(){
+  var r=Math.random(),type=r<0.2?"bad":(r<0.28?"gold":"fly");
+  var sp=(H/700)*(110+level*16)*(0.8+Math.random()*0.5);
+  items.push({type:type,x:24+Math.random()*(W-48),y:-20,r:type==="gold"?11:9,
+    vy:type==="gold"?sp*1.35:sp,ph:Math.random()*6,amp:20+Math.random()*30});
+}
+function burst(x,y,color,n){
+  for(var i=0;i<n;i++){var a=Math.random()*6.283,s=40+Math.random()*120;
+    parts.push({x:x,y:y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:.6,c:color})}
+}
+function pop(x,y,txt,color){pops.push({x:x,y:y,t:txt,c:color,life:.9})}
+
+function gameOver(){
+  if(score>best){best=score;try{localStorage.setItem("kunang_best",String(best))}catch(e){}}
+  hud();showOver();
+}
+
+function update(dt){
+  t+=dt;
+  level=1+Math.floor(score/120);
+  spawnT-=dt;
+  if(spawnT<=0){spawn();spawnT=Math.max(.38,1.0-level*.07)*(0.8+Math.random()*0.4)}
+  if(keys.left)target-=620*dt;
+  if(keys.right)target+=620*dt;
+  var hw=jarW()/2;
+  target=Math.min(Math.max(target,hw),W-hw);
+  px+=(target-px)*Math.min(1,14*dt);
+  var jw=jarW(),jh=jw*0.95,top=H-jh-10;
+  for(var i=items.length-1;i>=0;i--){
+    var it=items[i];
+    it.y+=it.vy*dt;
+    it.x+=Math.sin(t*2+it.ph)*it.amp*dt;
+    if(it.y+it.r>top+6&&it.y<top+jh*0.45&&Math.abs(it.x-px)<jw/2-4){
+      items.splice(i,1);
+      if(it.type==="bad"){
+        lives--;combo=0;shake=.35;
+        burst(it.x,it.y,"#ff5d73",16);pop(it.x,top-6,"Aduh!","#ff5d73");
+        hud();
+        if(lives<=0){gameOver();return}
+      }else{
+        var pts=(it.type==="gold"?30:10)*mult();
+        score+=pts;combo++;
+        burst(it.x,it.y,it.type==="gold"?"#ffb703":"#d8f34a",12);
+        pop(it.x,top-6,"+"+pts,it.type==="gold"?"#ffb703":"#d8f34a");
+        hud();
+      }
+    }else if(it.y>H+30){
+      items.splice(i,1);
+      if(it.type!=="bad"&&combo>0){combo=0;hud()}
+    }
+  }
+  for(i=parts.length-1;i>=0;i--){
+    var p=parts[i];p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=200*dt;
+    if(p.life<=0)parts.splice(i,1);
+  }
+  for(i=pops.length-1;i>=0;i--){
+    var q=pops[i];q.life-=dt;q.y-=50*dt;if(q.life<=0)pops.splice(i,1);
+  }
+  if(shake>0)shake-=dt;
+}
+
+function rr(x,y,w,h,r){
+  ctx.beginPath();ctx.moveTo(x+r,y);ctx.arcTo(x+w,y,x+w,y+h,r);ctx.arcTo(x+w,y+h,x,y+h,r);
+  ctx.arcTo(x,y+h,x,y,r);ctx.arcTo(x,y,x+w,y,r);ctx.closePath();
+}
+function glow(x,y,r,c){
+  var g=ctx.createRadialGradient(x,y,0,x,y,r);
+  g.addColorStop(0,c+"cc");g.addColorStop(1,c+"00");
+  ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,r,0,6.283);ctx.fill();
+}
+
+function drawItem(it){
+  var flap=Math.sin(t*28+it.ph)*0.5+0.5;
+  if(it.type==="bad"){
+    glow(it.x,it.y,it.r*2.2,"#ff5d73");
+    ctx.fillStyle="#6b3fb5";
+    ctx.beginPath();ctx.ellipse(it.x-it.r*1.1,it.y,it.r*1.2,it.r*(.5+flap*.5),-.3,0,6.283);ctx.fill();
+    ctx.beginPath();ctx.ellipse(it.x+it.r*1.1,it.y,it.r*1.2,it.r*(.5+flap*.5),.3,0,6.283);ctx.fill();
+    ctx.fillStyle="#241047";ctx.beginPath();ctx.arc(it.x,it.y,it.r*.8,0,6.283);ctx.fill();
+    ctx.fillStyle="#ff5d73";
+    ctx.beginPath();ctx.arc(it.x-3,it.y-1,2,0,6.283);ctx.arc(it.x+3,it.y-1,2,0,6.283);ctx.fill();
+  }else{
+    var c=it.type==="gold"?"#ffb703":"#d8f34a";
+    glow(it.x,it.y,it.r*3,c);
+    ctx.fillStyle="rgba(255,255,255,.55)";
+    ctx.beginPath();ctx.ellipse(it.x-it.r*.8,it.y-it.r*.6,it.r*.9,it.r*(.3+flap*.4),-.6,0,6.283);ctx.fill();
+    ctx.beginPath();ctx.ellipse(it.x+it.r*.8,it.y-it.r*.6,it.r*.9,it.r*(.3+flap*.4),.6,0,6.283);ctx.fill();
+    ctx.fillStyle=it.type==="gold"?"#fff2b0":"#f6ffb8";
+    ctx.beginPath();ctx.arc(it.x,it.y,it.r*.6,0,6.283);ctx.fill();
+  }
+}
+
+function drawJar(){
+  var jw=jarW(),jh=jw*0.95,top=H-jh-10,x=px-jw/2,m=mult();
+  glow(px,top+jh*.55,jw*(.8+m*.12),"#d8f34a");
+  var frac=m>=5?1:(combo%5)/5;
+  ctx.save();
+  rr(x,top+10,jw,jh-10,16);ctx.clip();
+  ctx.fillStyle="rgba(255,255,255,.1)";ctx.fillRect(x,top,jw,jh);
+  ctx.fillStyle="rgba(216,243,74,.55)";
+  var fh=(jh-10)*frac;ctx.fillRect(x,top+jh-fh,jw,fh);
+  ctx.restore();
+  ctx.lineWidth=3;ctx.strokeStyle="rgba(244,241,255,.85)";
+  rr(x,top+10,jw,jh-10,16);ctx.stroke();
+  ctx.fillStyle="#19c3b1";rr(x+jw*.08,top,jw*.84,12,5);ctx.fill();
+}
+
+function draw(){
+  ctx.save();
+  if(shake>0)ctx.translate((Math.random()-.5)*8,(Math.random()-.5)*8);
+  var g=ctx.createLinearGradient(0,0,0,H);
+  g.addColorStop(0,"#150f3d");g.addColorStop(.6,"#2a1a6e");g.addColorStop(1,"#0f6b6b");
+  ctx.fillStyle=g;ctx.fillRect(-10,-10,W+20,H+20);
+  for(var i=0;i<stars.length;i++){
+    var s=stars[i];ctx.globalAlpha=.4+.4*Math.sin(t*2+s.p);
+    ctx.fillStyle="#f4f1ff";ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,6.283);ctx.fill();
+  }
+  ctx.globalAlpha=1;
+  ctx.fillStyle="#0a2f3a";
+  ctx.beginPath();ctx.moveTo(0,H);
+  for(var x=0;x<=W;x+=20)ctx.lineTo(x,H-18-Math.sin(x*.03)*10-Math.cos(x*.071)*6);
+  ctx.lineTo(W,H);ctx.closePath();ctx.fill();
+  for(i=0;i<items.length;i++)drawItem(items[i]);
+  for(i=0;i<parts.length;i++){var p=parts[i];ctx.globalAlpha=Math.max(0,p.life/.6);
+    ctx.fillStyle=p.c;ctx.beginPath();ctx.arc(p.x,p.y,2.5,0,6.283);ctx.fill()}
+  ctx.globalAlpha=1;
+  drawJar();
+  ctx.font="bold 18px ui-rounded,'Trebuchet MS',sans-serif";ctx.textAlign="center";
+  for(i=0;i<pops.length;i++){var q=pops[i];ctx.globalAlpha=Math.min(1,q.life*1.5);
+    ctx.fillStyle=q.c;ctx.fillText(q.t,q.x,q.y)}
+  ctx.globalAlpha=1;
+  if(state==="play"){ctx.font="bold 13px ui-rounded,sans-serif";ctx.textAlign="left";
+    ctx.fillStyle="rgba(244,241,255,.7)";ctx.fillText("Level "+level,12,22)}
+  ctx.restore();
+}
+
+var last=0;
+function loop(ts){
+  var dt=Math.min(.05,(ts-last)/1000||0);last=ts;
+  if(state==="play")update(dt);else t+=dt;
+  draw();
+  requestAnimationFrame(loop);
+}
+
+function setTargetFrom(e){
+  var r=cv.getBoundingClientRect();target=e.clientX-r.left;
+}
+cv.addEventListener("pointerdown",function(e){setTargetFrom(e);try{cv.setPointerCapture(e.pointerId)}catch(x){}});
+cv.addEventListener("pointermove",function(e){setTargetFrom(e)});
+
+document.addEventListener("keydown",function(e){
+  var k=e.key;
+  if(k==="ArrowLeft"||k==="a"||k==="A"){keys.left=true;e.preventDefault()}
+  else if(k==="ArrowRight"||k==="d"||k==="D"){keys.right=true;e.preventDefault()}
+});
+document.addEventListener("keyup",function(e){
+  var k=e.key;
+  if(k==="ArrowLeft"||k==="a"||k==="A")keys.left=false;
+  if(k==="ArrowRight"||k==="d"||k==="D")keys.right=false;
+});
+
+document.addEventListener("click",function(e){
+  var b=e.target.closest("[data-act]");if(!b)return;
+  var a=b.getAttribute("data-act");
+  if(a==="start"||a==="restart")start();
+  else if(a==="help"){if(state!=="pause"||ov.classList.contains("hide"))showHelp()}
+  else if(a==="closehelp"){
+    if(prev==="play"){state="play";hide()}
+    else if(prev==="over")showOver();
+    else showStart();
+  }
+});
+
+window.addEventListener("resize",resize);
+window.addEventListener("blur",function(){if(state==="play")showHelp()});
+
+resize();hud();showStart();
+requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>
